@@ -2,6 +2,7 @@ import math
 from typing import Dict, Tuple
 
 import h5py
+import hdf5plugin  # noqa: F401  — registers compression filters
 import numpy as np
 from numba import jit
 
@@ -35,7 +36,7 @@ class EventSlicer:
         t_end_us_idx = t_start_ms_idx + idx_end_offset
 
         out = {}
-        out["t"] = time_array_conservative[idx_start_offset:idx_end_offset] + self.t_offset
+        out["t"] = time_array_conservative[idx_start_offset:idx_end_offset].astype("int64") + self.t_offset
         for d in ["p", "x", "y"]:
             out[d] = np.asarray(self.events[d][t_start_us_idx:t_end_us_idx])
             assert out[d].size == out["t"].size

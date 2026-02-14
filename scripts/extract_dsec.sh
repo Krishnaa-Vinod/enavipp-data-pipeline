@@ -31,10 +31,16 @@ if [[ "$MODE" == "debug" ]]; then
   echo "[extract_dsec] extracting disparity_event"
   unzip -n "$ZIP_DIR/${SEQ}_disparity_event.zip" -d "$SEQ_DIR/disparity" >/dev/null
 
-  # Some zips already contain a "event/" folder. Ensure final layout is disparity/event/*.png
+  # The disparity zip may extract PNGs into disparity/ directly or into disparity/event/.
+  # Ensure final layout is disparity/event/*.png
   if [[ -d "$SEQ_DIR/disparity/event/event" ]]; then
     mv "$SEQ_DIR/disparity/event/event"/* "$SEQ_DIR/disparity/event/" || true
     rmdir "$SEQ_DIR/disparity/event/event" || true
+  fi
+
+  # Move any PNGs that ended up in disparity/ directly into disparity/event/
+  if compgen -G "$SEQ_DIR/disparity/*.png" > /dev/null; then
+    mv "$SEQ_DIR/disparity/"*.png "$SEQ_DIR/disparity/event/" || true
   fi
 
   echo "[extract_dsec] placing timestamps.txt"

@@ -3,6 +3,7 @@ torchvision
 numpy
 opencv-python
 h5py
+hdf5plugin
 tqdm
 matplotlib
 pyyaml
