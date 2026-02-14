@@ -1,0 +1,21 @@
+# Data & large artifacts
+data/
+artifacts/
+runs/
+logs/
+checkpoints/
+**/*.h5
+**/*.zip
+**/*.bag
+**/*.npz
+**/*.pt
+**/*.npy
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
