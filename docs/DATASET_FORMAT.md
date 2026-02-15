@@ -27,10 +27,20 @@ sequences/
     rgb/left/jpeg        (N,)           vlen bytes # JPEG encoded left RGB frame
     rgb/left/t_us        (N,)           int64      # RGB timestamp (us)
     gt/disparity_frame_idx (N,)         int32      # index into disp PNGs, -1=none
-    imu/t_us             (M,)           int64      # (future) IMU timestamps
-    imu/data             (M,D)          float32    # (future) accel+gyro
-    imu/ptr              (N+1,)         int64      # (future) ragged array pointers
+    imu/                                            # present when --include_imu 1
+      t_us               (M,)           int64      # concatenated IMU timestamps (us)
+      data               (M,6)          float32    # [ax, ay, az, gx, gy, gz] (m/s², rad/s)
+      ptr                (N+1,)         int64      # ragged ptrs: window i → [ptr[i]:ptr[i+1]]
+      attrs: {topic_name, units, timebase, tolerance_us, total_samples}
 ```
+
+### Time-sync invariants
+
+| Invariant | Formula |
+|-----------|--------|
+| 50ms windows | `t_end_us[i] - t_start_us[i] == 50000` ∀i |
+| RGB aligned to anchor | `rgb/left/t_us[i] == t_end_us[i]` ∀i |
+| IMU within window | `t_start_us[i] <= imu/t_us[ptr[i]:ptr[i+1]] < t_end_us[i]` ∀i |
 
 ## PyTorch batch format
 
@@ -38,8 +48,8 @@ When loaded via `EnavippH5Dataset` + `collate_enavipp`:
 
 | Key | Shape | Type | Description |
 |-----|-------|------|-------------|
-| `voxel` | `(B, C, H, W)` | float32 | Voxel grids, C = num_bins |
-| `rgb_left` | `(B, 3, H, W)` | float32 | RGB frames normalized to [0,1] |
+| `voxel` | `(B, C, H, W)` or `(B, P, C, H, W)` | float32 | Voxel grids (P dim when history > 1) |
+| `rgb_left` | `(B, 3, H, W)` or `(B, P, 3, H, W)` | float32 | RGB frames normalized to [0,1] |
 | `t_start_us` | `(B,)` | int64 | Window start timestamps |
 | `t_end_us` | `(B,)` | int64 | Window end timestamps (anchor) |
 | `gt_disp_idx` | `(B,)` | long | Disparity PNG index (-1 = unavailable) |

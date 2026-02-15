@@ -9,4 +9,4 @@ matplotlib
 pyyaml
 rich
 numba
-# rosbags  # uncomment when IMU extraction from DSEC rosbags is needed
+rosbags  # IMU extraction from DSEC rosbags

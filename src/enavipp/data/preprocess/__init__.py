@@ -111,6 +111,8 @@ def preprocess_sequence(
     include_rgb: bool = True,
     include_imu: bool = False,
     lidar_imu_root: Optional[Path] = None,
+    imu_topic: Optional[str] = None,
+    imu_tolerance_us: int = 0,
     rgb_jpeg_quality: int = 95,
     rgb_resize: Optional[Tuple[int, int]] = None,
 ) -> Path:
@@ -172,6 +174,23 @@ def preprocess_sequence(
         if disp_ts_file.exists():
             disp_timestamps = np.loadtxt(str(disp_ts_file), dtype=np.int64)
 
+    # ── Extract IMU (before H5 write, so we have the full stream) ──
+    imu_t_us_full: Optional[np.ndarray] = None
+    imu_data_full: Optional[np.ndarray] = None
+    imu_topic_used: Optional[str] = None
+    if include_imu:
+        from .imu_dsec import (
+            find_bag_for_sequence,
+            _auto_detect_imu_topic,
+            extract_imu_stream,
+        )
+        if lidar_imu_root is None:
+            raise ValueError("--include_imu requires --lidar_imu_root")
+        bag_path = find_bag_for_sequence(lidar_imu_root, seq_name)
+        imu_topic_used = _auto_detect_imu_topic(bag_path, override=imu_topic)
+        imu_t_us_full, imu_data_full = extract_imu_stream(bag_path, imu_topic_used)
+        print(f"[preprocess] IMU: {len(imu_t_us_full)} samples from {bag_path.name} topic={imu_topic_used}")
+
     # ── Write H5 ────────────────────────────────────────────────
     attrs = {
         "dataset": "DSEC",
@@ -183,6 +202,7 @@ def preprocess_sequence(
         "events_rectified": rectify,
         "anchor": anchor_source,
         "rgb_store": "jpeg_bytes" if include_rgb else "none",
+        "imu_included": include_imu,
     }
     if rgb_resize:
         attrs["rgb_resize_w"] = rgb_resize[0]
@@ -259,6 +279,29 @@ def preprocess_sequence(
             n_written += 1
 
         grp.attrs["num_samples"] = n_written
+
+        # ── Write IMU (bulk, after voxel loop so we have t_start/t_end) ──
+        if include_imu and imu_t_us_full is not None:
+            from .imu_dsec import slice_imu_to_windows
+
+            t_starts = grp["t_start_us"][:]
+            t_ends = grp["t_end_us"][:]
+            imu_t_concat, imu_d_concat, imu_ptr = slice_imu_to_windows(
+                imu_t_us_full, imu_data_full, t_starts, t_ends,
+                tolerance_us=imu_tolerance_us,
+            )
+            imu_grp = grp.require_group("imu")
+            imu_grp.create_dataset("t_us", data=imu_t_concat, compression="gzip")
+            imu_grp.create_dataset("data", data=imu_d_concat, compression="gzip")
+            imu_grp.create_dataset("ptr", data=imu_ptr, compression="gzip")
+            imu_grp.attrs["topic_name"] = imu_topic_used or ""
+            imu_grp.attrs["units"] = "m/s^2 (accel) + rad/s (gyro)"
+            imu_grp.attrs["timebase"] = "us"
+            imu_grp.attrs["tolerance_us"] = imu_tolerance_us
+            imu_grp.attrs["total_samples"] = len(imu_t_concat)
+            avg_per_win = len(imu_t_concat) / n_written if n_written > 0 else 0
+            print(f"[preprocess] IMU written: {len(imu_t_concat)} total, {avg_per_win:.1f} avg/window")
+
         print(f"[preprocess] Wrote {n_written} samples to {out_path}")
 
     h5_left.close()

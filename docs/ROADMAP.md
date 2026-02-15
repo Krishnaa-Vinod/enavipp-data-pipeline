@@ -17,18 +17,21 @@
 - [x] JPEG-encoded RGB storage (saves ~80% vs raw PNG arrays)
 - [x] Disparity GT index mapping per voxel window
 - [x] CLI script: `scripts/preprocess_dsec_to_h5.py`
-- [ ] IMU extraction from rosbags (requires `rosbags` package)
-- [ ] History stacking: `[P, C, H, W]` tensors with P past voxel grids
+- [x] IMU extraction from rosbags (`rosbags` package)
+- [x] Time-sync validation script (`scripts/validate_preprocessed_h5.py`)
 
 ## Phase 3: Dataloader ✅
 - [x] `EnavippH5Dataset` (PyTorch Dataset) — lazy H5 open, multi-worker safe
 - [x] JPEG decode on-the-fly for RGB (→ `[3,H,W]` float32 tensor)
 - [x] Custom `collate_enavipp()` with IMU padding + mask
 - [x] H5 inspection/visualization script (`scripts/inspect_preprocessed_h5.py`)
+- [x] History stacking: `[P, C, H, W]` tensors with P past voxel grids (NoMaD-style)
+- [x] History inspection script (`scripts/inspect_h5_history.py`)
 - [ ] Multi-H5 federated dataset (combine multiple sequences)
 - [ ] Train/val/test split utilities
 
-## Phase 4: Future Extensions
+## Phase 4: Scale to Full DSEC
+- [ ] Download + preprocess all 53 train/test sequences
 - [ ] Custom dataset support (non-DSEC event cameras)
 - [ ] NoMaD-style tuple generation (past context + goal + future actions)
 - [ ] Integration with navigation policy training repos

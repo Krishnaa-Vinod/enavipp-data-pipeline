@@ -27,6 +27,10 @@ def main():
     parser.add_argument("--include_rgb", type=int, default=1, choices=[0, 1])
     parser.add_argument("--include_imu", type=int, default=0, choices=[0, 1])
     parser.add_argument("--lidar_imu_root", type=Path, default=None)
+    parser.add_argument("--imu_topic", type=str, default=None,
+                        help="Override IMU topic (auto-detected if omitted)")
+    parser.add_argument("--imu_tolerance_us", type=int, default=0,
+                        help="Tolerance for IMU window slicing (us)")
     args = parser.parse_args()
 
     # Load config
@@ -52,6 +56,14 @@ def main():
     if resize:
         resize = tuple(resize)
 
+    # Validate IMU requirements
+    if args.include_imu and not args.lidar_imu_root:
+        print("ERROR: --include_imu 1 requires --lidar_imu_root <path>")
+        sys.exit(1)
+    if args.include_imu and args.lidar_imu_root and not args.lidar_imu_root.is_dir():
+        print(f"ERROR: lidar_imu_root not found: {args.lidar_imu_root}")
+        sys.exit(1)
+
     preprocess_sequence(
         seq_dir=seq_dir,
         out_path=args.out,
@@ -64,6 +76,8 @@ def main():
         include_rgb=bool(args.include_rgb),
         include_imu=bool(args.include_imu),
         lidar_imu_root=args.lidar_imu_root,
+        imu_topic=args.imu_topic,
+        imu_tolerance_us=args.imu_tolerance_us,
         rgb_jpeg_quality=rgb_cfg.get("jpeg_quality", 95),
         rgb_resize=resize,
     )

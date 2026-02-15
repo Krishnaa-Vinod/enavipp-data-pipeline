@@ -1,6 +1,7 @@
 """Collate function for EnavippH5Dataset.
 
 Handles variable-length IMU sequences by zero-padding + mask.
+Works with both single-step voxels [C,H,W] and history-stacked [P,C,H,W].
 """
 from __future__ import annotations
 
@@ -12,11 +13,15 @@ import torch
 def collate_enavipp(batch: List[Dict]) -> Dict:
     """Custom collate that pads variable-length IMU and stacks everything else.
 
+    Handles voxel shapes:
+        - Single-step: [C, H, W] -> batched to [B, C, H, W]
+        - History:     [P, C, H, W] -> batched to [B, P, C, H, W]
+
     Returns
     -------
     dict with:
-        voxel : (B, C, H, W)
-        rgb_left : (B, 3, H, W) or absent
+        voxel : (B, C, H, W) or (B, P, C, H, W)
+        rgb_left : (B, 3, H, W) or (B, P, 3, H, W) or absent
         imu_data : (B, T_max, D) padded
         imu_t_us : (B, T_max) padded
         imu_mask : (B, T_max) bool — True where valid
