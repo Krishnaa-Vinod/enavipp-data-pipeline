@@ -27,29 +27,45 @@ logger = logging.getLogger(__name__)
 def find_bag_for_sequence(lidar_imu_root: Path, sequence_name: str) -> Path:
     """Locate the bag file for a given DSEC sequence.
 
-    Searches for:
-        <lidar_imu_root>/<sequence_name>.bag
-        <lidar_imu_root>/<sequence_name>/<sequence_name>.bag
-        <lidar_imu_root>/**/<sequence_name>.bag  (recursive)
+    DSEC bags cover full recordings — e.g., ``thun_00_a`` and ``thun_00_b``
+    share the same bag ``thun_00/lidar_imu.bag``.  We strip the trailing
+    segment letter (``_a``, ``_b``, …) to derive the base name.
+
+    Search order:
+        <root>/<sequence>.bag
+        <root>/<sequence>/<sequence>.bag
+        <root>/data/<base>/lidar_imu.bag      (DSEC zip layout)
+        <root>/<base>/lidar_imu.bag
+        <root>/<base>.bag
+        <root>/**/<base>*.bag                 (recursive fallback)
     """
+    import re
+    # Derive base recording name: thun_00_a → thun_00
+    base = re.sub(r'_[a-z]$', '', sequence_name)
+
     candidates = [
         lidar_imu_root / f"{sequence_name}.bag",
         lidar_imu_root / sequence_name / f"{sequence_name}.bag",
+        lidar_imu_root / "data" / base / "lidar_imu.bag",
+        lidar_imu_root / base / "lidar_imu.bag",
+        lidar_imu_root / f"{base}.bag",
     ]
     for p in candidates:
         if p.is_file():
             logger.info("Found bag: %s", p)
             return p
 
-    # Recursive fallback
-    found = list(lidar_imu_root.rglob(f"{sequence_name}.bag"))
+    # Recursive fallback — search for base name
+    found = list(lidar_imu_root.rglob(f"{base}*.bag"))
+    if not found:
+        found = list(lidar_imu_root.rglob(f"*{base}*/*.bag"))
     if found:
         logger.info("Found bag (recursive): %s", found[0])
         return found[0]
 
     raise FileNotFoundError(
-        f"No bag file found for sequence '{sequence_name}' under {lidar_imu_root}. "
-        f"Searched: {[str(c) for c in candidates]} + recursive."
+        f"No bag file found for sequence '{sequence_name}' (base='{base}') "
+        f"under {lidar_imu_root}. Searched: {[str(c) for c in candidates]} + recursive."
     )
 
 
@@ -100,7 +116,9 @@ def extract_imu_stream(
     data : float32 array [M, 6] — (ax, ay, az, gx, gy, gz)
     """
     from rosbags.rosbag1 import Reader
-    from rosbags.serde import deserialize_cdr, ros1_to_cdr
+    from rosbags.typesys import Stores, get_typestore
+
+    typestore = get_typestore(Stores.ROS1_NOETIC)
 
     timestamps = []
     imu_vals = []
@@ -111,7 +129,7 @@ def extract_imu_stream(
             raise ValueError(f"Topic '{topic}' not found in {bag_path}")
 
         for conn, timestamp, rawdata in reader.messages(connections=conns):
-            msg = deserialize_cdr(ros1_to_cdr(rawdata, conn.msgtype), conn.msgtype)
+            msg = typestore.deserialize_ros1(rawdata, conn.msgtype)
 
             # Convert ROS stamp to microseconds
             t_us = int(msg.header.stamp.sec) * 1_000_000 + int(msg.header.stamp.nanosec) // 1_000
