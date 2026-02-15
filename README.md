@@ -2,7 +2,7 @@
 
 A modular data pipeline for **event-camera-based navigation** research. Currently focused on the [DSEC](https://dsec.ifi.uzh.ch/) stereo event camera dataset. Inspired by [NoMaD](https://general-navigation-models.github.io/)-style past-context setups, adapted to event voxel space.
 
-> **This is a data pipeline repo** -- it handles downloading, visualizing, understanding, preprocessing, and loading event camera datasets. Model training code lives separately.
+> **This is a data pipeline repo** — it handles downloading, visualizing, preprocessing, and loading event camera datasets. Model training code lives separately.
 
 ---
 
@@ -10,12 +10,50 @@ A modular data pipeline for **event-camera-based navigation** research. Currentl
 
 | Stage | Status | Description |
 |-------|--------|-------------|
-| **1. Download** | Done | Scripts to download DSEC (debug subset or full) |
-| **2. Visualize & Understand** | **Current** | Load raw data, inspect formats, save visualizations |
-| **3. Preprocess** | Planned | Convert raw events to aligned voxel grid sequences |
-| **4. Dataloader** | Planned | PyTorch DataLoader for preprocessed tensors |
+| **1. Download** | Done | Scripts to download DSEC (debug subset or full, events + RGB + lidar/IMU) |
+| **2. Visualize & Understand** | Done | Load raw data, inspect formats, save visualizations |
+| **3. Preprocess** | Done | Convert raw events + RGB to aligned H5 files (voxel grids + JPEG-encoded RGB) |
+| **4. Dataloader** | Done | PyTorch Dataset/DataLoader for preprocessed H5 files |
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the full roadmap.
+
+---
+
+## Quick Start
+
+```bash
+# 1. Download & extract debug subset (~1.5 GB with RGB)
+bash scripts/download_dsec.sh --mode debug --include_images 1
+bash scripts/extract_dsec.sh  --mode debug --include_images 1
+
+# 2. Inspect raw data (uses vendored DSEC loader)
+python scripts/inspect_dsec.py --dsec_root data/raw/DSEC --num_batches 3
+
+# 3. Preprocess to H5 (5-bin voxels @ 50ms + aligned RGB)
+python scripts/preprocess_dsec_to_h5.py \
+    --config configs/preprocess/dsec_bins5_50ms_480x640.yaml \
+    --dsec_root data/raw/DSEC --split train --sequence thun_00_a \
+    --out data/processed/DSEC/thun_00_a_bins5_50ms.h5 \
+    --include_rgb 1
+
+# 4. Inspect the preprocessed H5
+python scripts/inspect_preprocessed_h5.py \
+    --h5 data/processed/DSEC/thun_00_a_bins5_50ms.h5 \
+    --num_samples 4 --out artifacts/inspect_h5
+
+# 5. Use in Python
+python -c "
+import sys; sys.path.insert(0, 'src')
+from enavipp.data.datasets import EnavippH5Dataset, collate_enavipp
+from torch.utils.data import DataLoader
+
+ds = EnavippH5Dataset('data/processed/DSEC/thun_00_a_bins5_50ms.h5', load_rgb=True)
+dl = DataLoader(ds, batch_size=4, collate_fn=collate_enavipp)
+batch = next(iter(dl))
+print(batch['voxel'].shape)   # torch.Size([4, 5, 480, 640])
+print(batch['rgb_left'].shape) # torch.Size([4, 3, 480, 640])
+"
+```
 
 ---
 
@@ -23,34 +61,42 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for the full roadmap.
 
 The DSEC dataset is a large-scale stereo event camera dataset for driving scenarios, captured in Zurich. Download page: https://dsec.ifi.uzh.ch/dsec-datasets/download/
 
-### Debug subset (single sequence, ~560 MB)
+### Debug subset (single sequence)
 
-Downloads only `thun_00_a` -- one short driving sequence. Use this to validate the pipeline before committing to the full download (~50+ GB).
+Downloads `thun_00_a` — one short driving sequence. Events + disparity (~560 MB), add `--include_images 1` for RGB (~1.5 GB total).
 
 ```bash
+# Events + disparity only
 bash scripts/download_dsec.sh --mode debug
-bash scripts/extract_dsec.sh --mode debug
+bash scripts/extract_dsec.sh  --mode debug
+
+# Events + disparity + RGB images
+bash scripts/download_dsec.sh --mode debug --include_images 1
+bash scripts/extract_dsec.sh  --mode debug --include_images 1
+
+# Events + disparity + RGB + lidar/IMU (adds ~3.8 GB global archive)
+bash scripts/download_dsec.sh --mode debug --include_images 1 --include_lidar_imu 1
+bash scripts/extract_dsec.sh  --mode debug --include_images 1 --include_lidar_imu 1
 ```
 
 ### Full training set
 
 ```bash
-bash scripts/download_dsec.sh --mode full
-bash scripts/extract_dsec.sh --mode full
+bash scripts/download_dsec.sh --mode full --include_images 1
+bash scripts/extract_dsec.sh  --mode full --include_images 1
 ```
 
-### What gets downloaded
+### Script flags
 
-**Debug mode** downloads 4 files for sequence `thun_00_a`:
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--mode` | `debug` | `debug` (single sequence) or `full` (all train) |
+| `--split` | `train` | DSEC split name |
+| `--sequence` | `thun_00_a` | Sequence name (debug mode only) |
+| `--include_images` | `1` | Download/extract RGB images |
+| `--include_lidar_imu` | `0` | Download/extract lidar + IMU (~3.8 GB) |
 
-| File | Size | Contents |
-|------|------|----------|
-| `thun_00_a_events_left.zip` | ~285 MB | Left camera events (HDF5) |
-| `thun_00_a_events_right.zip` | ~261 MB | Right camera events (HDF5) |
-| `thun_00_a_disparity_event.zip` | ~17 MB | Ground truth disparity maps (16-bit PNG) |
-| `thun_00_a_disparity_timestamps.txt` | ~1 KB | Timestamps for each disparity frame |
-
-Scripts are **idempotent** -- re-running skips already-downloaded files. Uses `aria2c` for parallel download if available, falls back to `curl` with resume support.
+Scripts are **idempotent** — re-running skips already-downloaded/extracted files. Uses `aria2c` if available, falls back to `curl` with resume support.
 
 ### Extracted directory structure
 
@@ -60,55 +106,29 @@ data/raw/DSEC/
     thun_00_a/
       events/
         left/
-          events.h5           # Raw events: x, y, polarity, timestamp
-          rectify_map.h5      # Undistortion map for event coordinates
+          events.h5             # Raw events (requires hdf5plugin)
+          rectify_map.h5        # Undistortion map
         right/
           events.h5
           rectify_map.h5
       disparity/
-        timestamps.txt        # One timestamp (microseconds) per line
+        timestamps.txt          # Microsecond timestamps
         event/
-          000000.png          # 16-bit PNG, divide by 256 -> disparity in pixels
-          000001.png
-          ...                 # 120 frames total for thun_00_a
+          000000.png ... 000238.png   # 16-bit PNG disparity maps
+      images/                   # (if --include_images 1)
+        image_timestamps.txt    # Microsecond timestamps (239 frames)
+        left/rectified/
+          000000.png ... 000238.png   # RGB frames
+        right/rectified/
+          000000.png ... 000238.png
+      calibration/              # cam_to_cam.yaml, cam_to_lidar.yaml
 ```
 
 ---
 
-## Stage 2: Visualize & Understand the Data (current step)
+## Stage 2: Visualize & Understand Raw Data
 
-### How DSEC event data is stored
-
-**Events** are stored in HDF5 files (`events.h5`) with this schema:
-```
-events/
-  x    -> uint16   # pixel x-coordinate (0..639)
-  y    -> uint16   # pixel y-coordinate (0..479)
-  p    -> uint8    # polarity (0=OFF, 1=ON)
-  t    -> uint32   # timestamp in microseconds (relative)
-ms_to_idx  -> int64  # maps millisecond -> event array index (fast slicing)
-t_offset   -> int64  # add to t values to get absolute timestamps
-```
-
-The HDF5 files use custom compression filters, so **`hdf5plugin` is required** to read them.
-
-**Disparity ground truth** is stored as 16-bit PNGs:
-- `disp_float32 = cv2.imread(path, cv2.IMREAD_ANYDEPTH).astype('float32') / 256`
-- Shape: `[480, 640]`
-- Resolution: 480x640 (same as event camera)
-
-**Timestamps** (`timestamps.txt`): one integer per line, microseconds, one per disparity frame.
-
-### Voxel grid representation
-
-Raw events are converted to **voxel grids** for neural network consumption:
-- Time window: 50ms (configurable via `--delta_t_ms`)
-- Bins: 15 temporal slices within the window (configurable via `--num_bins`)
-- Output tensor shape: `[15, 480, 640]`
-- Bilinear interpolation in (x, y, t) space
-- Normalized: zero mean, unit std over nonzero entries
-
-### Running the inspection script
+### Inspect raw voxel grids
 
 ```bash
 python scripts/inspect_dsec.py \
@@ -117,50 +137,138 @@ python scripts/inspect_dsec.py \
     --save_dir artifacts/inspect
 ```
 
-This loads voxel grids from the dataset, prints shapes and statistics, and saves visualizations:
-
+Output:
 ```
 Dataset length: 119
-Batch 0: vox_left shape=(1, 15, 480, 640) disp shape=(1, 480, 640) nonzero_frac=0.265521
-Batch 1: vox_left shape=(1, 15, 480, 640) disp shape=(1, 480, 640) nonzero_frac=0.258040
+Batch 0: vox_left shape=(1, 15, 480, 640) disp shape=(1, 480, 640) nonzero_frac=0.268
+Batch 1: vox_left shape=(1, 15, 480, 640) disp shape=(1, 480, 640) nonzero_frac=0.229
 Saved visualizations to: artifacts/inspect
 ```
 
-**Output images** saved to `artifacts/inspect/`:
-- `event_sum_b*.png` -- Sum of all 15 voxel bins -> grayscale "event image" showing edges and motion
-- `disparity_b*.png` -- Ground truth disparity map (inferno colormap)
+Saves `event_sum_b*.png` (voxel sum heatmap) and `disparity_b*.png` (GT disparity).
 
-### DSEC sensor setup
+### DSEC data format
 
-The DSEC rig includes:
-- **2x Prophesee Gen3.1 event cameras** (stereo, 640x480, left + right)
-- **2x FLIR Blackfly S RGB cameras** (stereo, not used in debug subset)
-- **Velodyne VLP-16 LiDAR** (optional, available via `--mode full`)
-- **Bosch BMI085 IMU** (available in lidar_imu.zip)
-- Baseline: ~60 cm between stereo event cameras
+**Events** in HDF5 (`events.h5`, requires `hdf5plugin`):
+```
+events/x -> uint16, events/y -> uint16, events/p -> uint8, events/t -> uint32 (relative us)
+ms_to_idx -> int64 (fast slicing lookup), t_offset -> int64 (add to t for absolute timestamps)
+```
 
-For more details on the sensor layout and calibration, see the [DSEC paper](https://rpg.ifi.uzh.ch/docs/RAL21_DSEC.pdf).
+**Disparity GT**: 16-bit PNG, `disp_float32 = imread(path, IMREAD_ANYDEPTH).astype('f4') / 256`
 
----
-
-## Stage 3: Data Preprocessing (planned)
-
-Will include:
-- Configurable voxelization (see `configs/voxelization/default.yaml`)
-- History stacking: `[P, C, H, W]` tensors with P past voxel grids
-- Timestamp alignment between events and ground truth
-- Manifest generation (JSON index of all samples)
-- Save preprocessed tensors to disk
+**Image timestamps**: one integer per line (microseconds), 239 frames for thun_00_a. Note: event timestamps and image timestamps are both in microseconds but reference the same clock system.
 
 ---
 
-## Stage 4: Dataloader (planned)
+## Stage 3: Preprocess to H5
 
-Will include:
-- PyTorch Dataset/DataLoader for preprocessed tensors
-- Public API: download preprocessed data -> plug into any model
-- Multi-modality support (events, RGB, IMU, GT)
-- Train/val/test splits
+The preprocessing pipeline converts a raw DSEC sequence into a single HDF5 file containing:
+- **Voxel grids** — `[num_bins, H, W]` float16, one per anchor timestamp
+- **JPEG-encoded RGB** — stored as variable-length byte arrays (saves ~80% vs raw)
+- **Disparity GT index** — index into the disparity PNG frames
+- **Timestamps** — microsecond start/end for each voxel window
+
+### Config
+
+Edit `configs/preprocess/dsec_bins5_50ms_480x640.yaml`:
+```yaml
+voxel:
+  num_bins: 5
+  window_ms: 50
+  height: 480
+  width: 640
+  normalize: true
+  rectify: true
+rgb:
+  store_format: jpeg_bytes
+  jpeg_quality: 95
+  resize: [640, 480]
+anchor: image_timestamps
+```
+
+### Run preprocessing
+
+```bash
+python scripts/preprocess_dsec_to_h5.py \
+    --config configs/preprocess/dsec_bins5_50ms_480x640.yaml \
+    --dsec_root data/raw/DSEC \
+    --split train \
+    --sequence thun_00_a \
+    --out data/processed/DSEC/thun_00_a_bins5_50ms.h5 \
+    --include_rgb 1
+```
+
+Output: ~257 MB H5 file with 239 aligned samples (~10 min on a single core).
+
+### H5 file schema
+
+```
+/ (root)
+  attrs: {dataset, created_by, voxel_num_bins, voxel_window_ms, ...}
+  sequences/
+    thun_00_a/
+      attrs: {num_samples: 239}
+      t_start_us         (239,)    int64      # window start
+      t_end_us           (239,)    int64      # window end (= anchor timestamp)
+      events/voxel       (239,5,480,640) float16  # voxel grids, gzip compressed
+      rgb/left/jpeg      (239,)    vlen bytes # JPEG-encoded left RGB
+      rgb/left/t_us      (239,)    int64      # RGB timestamps
+      gt/disparity_frame_idx (239,) int32     # index into disparity PNGs (-1 if none)
+```
+
+### Inspect preprocessed H5
+
+```bash
+python scripts/inspect_preprocessed_h5.py \
+    --h5 data/processed/DSEC/thun_00_a_bins5_50ms.h5 \
+    --num_samples 4 \
+    --out artifacts/inspect_h5
+```
+
+Saves voxel heatmaps, per-bin slices, decoded RGB images, and optional IMU traces.
+
+---
+
+## Stage 4: PyTorch Dataloader
+
+### EnavippH5Dataset
+
+```python
+import sys; sys.path.insert(0, "src")
+from enavipp.data.datasets import EnavippH5Dataset, collate_enavipp
+from torch.utils.data import DataLoader
+
+ds = EnavippH5Dataset(
+    "data/processed/DSEC/thun_00_a_bins5_50ms.h5",
+    load_rgb=True,    # decode JPEG to [3,H,W] float32 tensor
+    load_imu=False,   # set True if H5 contains IMU
+)
+
+dl = DataLoader(ds, batch_size=8, collate_fn=collate_enavipp, num_workers=4)
+
+for batch in dl:
+    voxel = batch["voxel"]          # (B, 5, 480, 640) float32
+    rgb   = batch["rgb_left"]       # (B, 3, 480, 640) float32 [0,1]
+    t0    = batch["t_start_us"]     # (B,) int64
+    t1    = batch["t_end_us"]       # (B,) int64
+    meta  = batch["meta"]           # list of dicts
+    # batch["imu_data"], batch["imu_mask"] available when load_imu=True
+    break
+```
+
+### Batch format
+
+| Key | Shape | Type | Description |
+|-----|-------|------|-------------|
+| `voxel` | `(B,C,H,W)` | float32 | Voxel grids |
+| `rgb_left` | `(B,3,H,W)` | float32 | RGB (0-1), present if `load_rgb=True` |
+| `t_start_us` | `(B,)` | int64 | Window start timestamps |
+| `t_end_us` | `(B,)` | int64 | Window end timestamps |
+| `gt_disp_idx` | `(B,)` | long | Disparity frame index (-1 if unavailable) |
+| `imu_data` | `(B,T,D)` | float32 | Padded IMU data (if `load_imu=True`) |
+| `imu_mask` | `(B,T)` | bool | True where IMU valid |
+| `meta` | list[dict] | — | Sequence name, sample index |
 
 ---
 
@@ -169,19 +277,14 @@ Will include:
 ### On ASU Sol (recommended)
 
 ```bash
-# Request a GPU node
 interactive -G a100:1
 
-# Create environment
 module purge
 module load mamba/latest
 mamba create -n enavipp python=3.11 -y
 source activate enavipp
 
-# Install PyTorch (check Sol docs for latest compatible version)
 pip install torch torchvision
-
-# Install remaining deps
 pip install -r requirements.txt
 ```
 
@@ -190,16 +293,14 @@ pip install -r requirements.txt
 ```bash
 python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 python -c "import h5py, hdf5plugin; print('hdf5 OK')"
-python -c "import enavipp; print('enavipp', enavipp.__version__)"
+python -c "import sys; sys.path.insert(0,'src'); import enavipp; print('enavipp', enavipp.__version__)"
 ```
 
 ### On any Linux/macOS machine
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -r requirements.txt
+python -m venv .venv && source .venv/bin/activate
+pip install -U pip && pip install -r requirements.txt
 ```
 
 ---
@@ -208,54 +309,48 @@ pip install -r requirements.txt
 
 ```
 enavipp-data-pipeline/
-  src/enavipp/                    # Python package
+  src/enavipp/                          # Python package
     data/
-      types.py                    # VoxelizationConfig, Sample dataclasses
-      voxelization.py             # Event-to-voxel-grid conversion API
+      io/                               # H5Writer utility
+      preprocess/                       # Events -> H5 preprocessing module
       datasets/
-        dsec.py                   # DSEC dataset wrapper
-        custom.py                 # Placeholder for future datasets
+        h5_preprocessed.py              # EnavippH5Dataset (PyTorch Dataset)
+        collate.py                      # Batch collation with IMU padding
+        dsec.py                         # DSEC raw dataset wrapper
+        custom.py                       # Placeholder for custom datasets
+      types.py                          # VoxelizationConfig, Sample dataclasses
+      voxelization.py                   # Voxelization API
   scripts/
-    download_dsec.sh              # Download DSEC (--mode debug|full)
-    extract_dsec.sh               # Extract downloaded zips
-    inspect_dsec.py               # Load + visualize voxel grids
-  third_party/dsec_example/       # Vendored DSEC loader (from uzh-rpg/DSEC)
-    dsec_dataset/                 # Provider, Sequence, VoxelGrid classes
-    dsec_utils/                   # EventSlicer (HDF5 event reader)
+    download_dsec.sh                    # Download DSEC (--mode, --include_images, --include_lidar_imu)
+    extract_dsec.sh                     # Extract zips into consistent layout
+    inspect_dsec.py                     # Inspect raw voxel grids (vendored loader)
+    preprocess_dsec_to_h5.py            # Preprocess raw DSEC -> H5
+    inspect_preprocessed_h5.py          # Inspect & visualize preprocessed H5
   configs/
-    voxelization/default.yaml     # Voxelization parameters
-    modalities/default.yaml       # Which modalities to enable
+    preprocess/dsec_bins5_50ms_480x640.yaml  # Preprocessing config
+    voxelization/default.yaml           # Voxelization parameters
+    modalities/default.yaml             # Modality toggles
+  third_party/dsec_example/             # Vendored DSEC loader (uzh-rpg/DSEC)
+    dsec_dataset/                       # Provider, Sequence, VoxelGrid
+    dsec_utils/                         # EventSlicer (HDF5 reader)
   docs/
-    ROADMAP.md                    # Development roadmap
-    DATASET_FORMAT.md             # Output sample format spec
-    CUSTOM_DATASET_GUIDE.md       # How to add your own dataset
-  data/                           # NOT committed (see .gitignore)
-    raw/DSEC/                     # Extracted DSEC data lives here
-    raw/_zips/dsec/               # Downloaded zip files
-  artifacts/                      # NOT committed
-```
-
----
-
-## Quick Reference
-
-```bash
-# Full debug pipeline (download -> extract -> visualize)
-bash scripts/download_dsec.sh --mode debug
-bash scripts/extract_dsec.sh --mode debug
-python scripts/inspect_dsec.py --dsec_root data/raw/DSEC --num_batches 3 --save_dir artifacts/inspect
-
-# Check what was generated
-ls artifacts/inspect/
+    ROADMAP.md                          # Development roadmap
+    DATASET_FORMAT.md                   # H5 schema + sample format
+    CUSTOM_DATASET_GUIDE.md             # Adding custom datasets
+  data/                                 # NOT in git
+    raw/DSEC/                           # Extracted raw data
+    processed/DSEC/                     # Preprocessed H5 files
+    raw/_zips/dsec/                     # Downloaded archives
+  artifacts/                            # NOT in git (visualizations)
 ```
 
 ---
 
 ## Policy
 
-- **No data in git.** Raw data, zips, HDF5 files, processed tensors, and checkpoints are all in `.gitignore`.
-- **Idempotent scripts.** Re-running download/extract won't destroy existing data.
-- **Reproducible.** Anyone can clone this repo and run the scripts to get the same results.
+- **No data in git.** Raw data, zips, H5 files, processed tensors, and checkpoints are all in `.gitignore`.
+- **Idempotent scripts.** Re-running download/extract/preprocess won't destroy existing data.
+- **Reproducible.** Clone → run scripts → get the same preprocessed data.
 
 ## License
 
