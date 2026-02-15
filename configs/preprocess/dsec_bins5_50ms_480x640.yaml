@@ -1,0 +1,20 @@
+# ENavi++ / DSEC preprocessing config
+# Converts raw DSEC into a single H5 per sequence.
+
+voxelization:
+  num_bins: 5
+  window_ms: 50
+  height: 480
+  width: 640
+  normalize: true
+  rectify: true
+
+rgb:
+  store_format: jpeg_bytes    # "jpeg_bytes" | "raw_uint8"
+  jpeg_quality: 95
+  resize: [640, 480]          # [W, H] — null to keep original
+
+anchor: image_timestamps      # anchor voxel windows to image timestamps
+
+imu:
+  topic: /imu                 # ROS topic name in lidar_imu bag
