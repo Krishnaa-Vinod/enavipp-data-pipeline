@@ -1,6 +1,6 @@
 from pathlib import Path
 import torch
-from dataset.sequence import Sequence
+from dsec_dataset.sequence import Sequence
 
 
 class DatasetProvider:

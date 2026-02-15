@@ -1,0 +1,12 @@
+num_bins: 15
+window_ms: 50
+normalize: true
+rectify: true
+downsample:
+  enable: false
+  height: 240
+  width: 320
+history:
+  enable: true
+  past_steps: 5
+  stride_ms: 50

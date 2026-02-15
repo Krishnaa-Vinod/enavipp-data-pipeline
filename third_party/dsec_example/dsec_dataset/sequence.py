@@ -7,8 +7,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from dataset.representations import VoxelGrid
-from utils.eventslicer import EventSlicer
+from dsec_dataset.representations import VoxelGrid
+from dsec_utils.eventslicer import EventSlicer
 
 
 class Sequence(Dataset):

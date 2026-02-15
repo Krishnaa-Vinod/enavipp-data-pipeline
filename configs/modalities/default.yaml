@@ -1,0 +1,9 @@
+events:
+  enable: true
+  representation: voxel_grid
+rgb:
+  enable: false
+imu:
+  enable: false
+gt:
+  enable: false

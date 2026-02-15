@@ -20,11 +20,11 @@ def main():
     parser.add_argument("--save_dir", type=Path, default=Path("artifacts/inspect"))
     args = parser.parse_args()
 
-    # Make vendored DSEC example importable (so `import dataset.*` works)
+    # Make vendored DSEC example importable (so `import dsec_dataset.*` works)
     third_party_root = Path(__file__).resolve().parent.parent / "third_party" / "dsec_example"
     sys.path.insert(0, str(third_party_root))
 
-    from dataset.provider import DatasetProvider  # noqa: E402
+    from dsec_dataset.provider import DatasetProvider  # noqa: E402
 
     args.save_dir.mkdir(parents=True, exist_ok=True)
 
